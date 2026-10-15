@@ -134,6 +134,100 @@ npm test             # unit + HTTP-level controller tests (no database needed)
 npm run test:e2e     # full stack against the DATABASE_URL in .env (must be migrated)
 ```
 
+### Manual testing guide
+
+Start the app, then run the requests below in order. Replace `your_secret_api_key` with the `X_API_KEY` value from your `.env`. Requests 1 and 2 write to the database in `DATABASE_URL`; change the `eventId` in request 1 to create more records.
+
+```bash
+npm run start:dev
+```
+
+> If `npm run start:dev` or `npm run build` crashes with `ERR_REQUIRE_CYCLE_MODULE`, you are on Node 22.14, which has a bug loading the Nest CLI. Switch to a newer Node 22 release (for example `nvm use 22.23.3`).
+
+**1. New payment** → expect `201 Created`, `duplicate: false`.
+
+```bash
+curl -i -X POST http://localhost:3000/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: your_secret_api_key' \
+  -d '{
+    "eventId": "evt_01J9PAYMENT123",
+    "paymentReference": "PAY-2026-000001",
+    "status": "SUCCESS",
+    "eventTimestamp": "2026-10-14T10:30:00.000Z",
+    "amount": 100000,
+    "currency": "NGN",
+    "description": "Pay up now",
+    "customerName": "John Doe"
+  }'
+```
+
+**2. Same event, different content** → expect `200 OK`, `duplicate: true`, and the original `SUCCESS` record from request 1.
+
+```bash
+curl -i -X POST http://localhost:3000/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: your_secret_api_key' \
+  -d '{
+    "eventId": "evt_01J9PAYMENT123",
+    "paymentReference": "PAY-2026-000001",
+    "status": "FAILED",
+    "eventTimestamp": "2026-10-14T11:00:00.000Z",
+    "amount": 5000,
+    "currency": "NGN",
+    "description": "Changed content",
+    "customerName": "John Doe"
+  }'
+```
+
+**3. Invalid payload** → expect `400 Bad Request` with a list of field errors.
+
+```bash
+curl -i -X POST http://localhost:3000/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: your_secret_api_key' \
+  -d '{
+    "eventId": "   ",
+    "paymentReference": "PAY-2026-000002",
+    "status": "REFUNDED",
+    "eventTimestamp": "yesterday",
+    "amount": 10.5,
+    "currency": "ngn",
+    "description": "Bad data",
+    "customerName": "Jane Doe",
+    "extraField": true
+  }'
+```
+
+**4. Missing API key** → expect `401 Unauthorized`.
+
+```bash
+curl -i -X POST http://localhost:3000/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -d '{"eventId": "evt_no_key"}'
+```
+
+**5. List payments (defaults)** → expect `200 OK`, page 1, 20 per page, newest first.
+
+```bash
+curl -i http://localhost:3000/webhooks/payments \
+  -H 'x-api-key: your_secret_api_key'
+```
+
+**6. List with pagination and sorting** → expect `200 OK`, 5 per page, sorted by amount ascending.
+
+```bash
+curl -i 'http://localhost:3000/webhooks/payments?page=1&limit=5&sortBy=amount&sortOrder=asc' \
+  -H 'x-api-key: your_secret_api_key'
+```
+
+**7. Invalid list parameters** → expect `400 Bad Request`.
+
+```bash
+curl -i 'http://localhost:3000/webhooks/payments?page=0&limit=500&sortBy=description' \
+  -H 'x-api-key: your_secret_api_key'
+```
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
