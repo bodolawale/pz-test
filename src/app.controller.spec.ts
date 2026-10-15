@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AppController } from './app.controller.js';
-import { AppService } from './app.service.js';
+import { AppController } from './controllers/app.controller.js';
+import { UserRepository } from './repositories/user.repository.js';
+import { AppService } from './services/app.service.js';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -8,7 +9,15 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [
+        AppService,
+        {
+          provide: UserRepository,
+          useValue: {
+            findAll: vi.fn().mockResolvedValue([]),
+          },
+        },
+      ],
     }).compile();
 
     appController = app.get<AppController>(AppController);

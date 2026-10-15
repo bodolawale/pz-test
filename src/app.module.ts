@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { createObserveModule } from '@nestjs/observe';
-import { AppController } from './app.controller.js';
-import { AppService } from './app.service.js';
+import { AppController } from './controllers/app.controller.js';
+import { PrismaModule } from './prisma/prisma.module.js';
+import { UserRepository } from './repositories/user.repository.js';
+import { AppService } from './services/app.service.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -15,8 +17,9 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       runtimeMetrics: !Boolean(process.versions?.['webcontainer']),
       serviceId: 'nest-typescript-starter',
     }),
+    PrismaModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, UserRepository],
 })
 export class AppModule {}
