@@ -57,6 +57,83 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
+## Payment webhooks
+
+### Setup
+
+```bash
+cp .env.example .env          # then set DATABASE_URL and X_API_KEY
+npm install
+npx prisma migrate deploy     # applies the Payments table, status enum and unique eventId index
+npx prisma generate
+npm run start:dev             # http://localhost:3000
+```
+
+Every request to `/webhooks/payments` must send the `x-api-key` header matching `X_API_KEY`.
+
+### `POST /webhooks/payments`
+
+```bash
+curl -i -X POST http://localhost:3000/webhooks/payments \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: your_secret_api_key' \
+  -d '{
+    "eventId": "evt_01J9PAYMENT123",
+    "paymentReference": "PAY-2026-000001",
+    "status": "SUCCESS",
+    "eventTimestamp": "2026-10-14T10:30:00.000Z",
+    "amount": 100000,
+    "currency": "NGN",
+    "description": "Pay up now",
+    "customerName": "John Doe"
+  }'
+```
+
+| Scenario | Status | Body |
+|---|---|---|
+| New event saved | `201 Created` | `{ eventId, duplicate: false, payment }` |
+| Duplicate `eventId` | `200 OK` | `{ eventId, duplicate: true, payment }` (the originally stored record, even if the new payload differs) |
+| Invalid payload | `400 Bad Request` | error body, `message` is an array of field errors |
+| Missing or wrong API key | `401 Unauthorized` | error body |
+| Unexpected/database error | `500 Internal Server Error` | error body with a generic message (details are logged, never returned) |
+
+All errors share one shape: `{ statusCode, error, message, path, timestamp }`.
+
+Validation rules: `status` must be `PENDING`, `SUCCESS` or `FAILED`; `eventTimestamp` must be ISO 8601; `amount` must be a positive integer in the smallest currency unit (kobo); `currency` must be a 3-letter uppercase code; all string fields are required and non-empty; unknown fields are rejected.
+
+### `GET /webhooks/payments`
+
+```bash
+curl 'http://localhost:3000/webhooks/payments?page=1&limit=20&sortBy=createdAt&sortOrder=desc' \
+  -H 'x-api-key: your_secret_api_key'
+```
+
+| Query param | Default | Allowed |
+|---|---|---|
+| `page` | `1` | integer ≥ 1 |
+| `limit` | `20` | 1 to 100 |
+| `sortBy` | `createdAt` | `createdAt`, `eventTimestamp`, `amount` |
+| `sortOrder` | `desc` | `asc`, `desc` |
+
+Response: `{ data: Payment[], meta: { page, limit, total, totalPages, sortBy, sortOrder } }`.
+
+### Design notes
+
+- **Idempotency** is enforced by a unique index on `eventId`, not by a read-then-insert check. Concurrent deliveries of the same event race on the insert. One succeeds and the others hit Prisma error `P2002`, which the service turns into a `200` duplicate response with the stored record. The e2e suite fires concurrent deliveries to prove only one row is written.
+- **Duplicates return 200, not 409**, because providers retry on non-2xx responses. A 2xx tells them the event is already handled.
+- **One record per `eventId`, regardless of content.** The first delivery wins. A later delivery with the same `eventId` is never saved and never updates the stored record, even if its status, amount or other fields differ. The response always returns the original record so the caller can see what was kept. A status change must arrive as a new event with its own `eventId`.
+- **Amounts** are stored as integers in kobo to avoid floating-point rounding.
+- **Status** is a PostgreSQL enum and **currency** is `CHAR(3)`, so the database enforces the same rules as the DTO.
+- **API key comparison** hashes both values and uses a timing-safe compare, so neither the key nor its length leaks through response timing.
+- Layers: controller (HTTP, status codes) → service (idempotency logic) → repository (Prisma) with DTOs for input and a global exception filter for consistent errors.
+
+### Tests
+
+```bash
+npm test             # unit + HTTP-level controller tests (no database needed)
+npm run test:e2e     # full stack against the DATABASE_URL in .env (must be migrated)
+```
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
